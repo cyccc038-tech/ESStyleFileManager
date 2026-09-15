@@ -1,0 +1,102 @@
+name: Build ES HyperOS Compatibility APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/es-hyperos-compat.yml'
+      - 'security-test/patch_dex_only.py'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download exact Balatan APK
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 4 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+
+      - name: Preserve APK structure and replace only patched DEX entries
+        run: |
+          set -euxo pipefail
+          cp source.apk work.apk
+          mkdir dex
+          for n in '' 2 3 4 5 6 7 8; do unzip -p source.apk "classes${n}.dex" > "dex/classes${n}.dex"; done
+          python3 security-test/patch_dex_only.py dex/classes*.dex | tee patch-log.txt
+          # Remove old v1/JAR signature material; all app contents otherwise stay from original APK.
+          zip -q -d work.apk 'META-INF/BALA.SF' 'META-INF/BALA.RSA' 'META-INF/MANIFEST.MF' || true
+          # DEX files were deflated in the source. Replace only those entries instead of rebuilding all 7k files.
+          (cd dex && zip -q -9 -u ../work.apk classes.dex classes2.dex classes3.dex classes4.dex classes5.dex classes6.dex classes7.dex classes8.dex)
+          unzip -t work.apk | tail -2
+
+      - name: Locate Android build tools
+        run: |
+          set -euxo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          echo "BUILD_TOOLS=$BUILD_TOOLS" >> "$GITHUB_ENV"
+          "$BUILD_TOOLS/apksigner" --version
+          "$BUILD_TOOLS/zipalign" -h | head -2 || true
+
+      - name: Zipalign
+        run: |
+          set -euxo pipefail
+          "$BUILD_TOOLS/zipalign" -f -p 4 work.apk aligned.apk
+          "$BUILD_TOOLS/zipalign" -c -p 4 aligned.apk
+
+      - name: Create compatibility signing key
+        run: |
+          set -euxo pipefail
+          keytool -genkeypair -noprompt \
+            -keystore hyperos.keystore -storepass changeit -keypass changeit \
+            -alias esprivacy -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 3650 \
+            -dname 'CN=ES Privacy HyperOS Build, O=Local Privacy Build, C=US'
+
+      - name: Sign explicitly with APK Signature Scheme v1 + v2 + v3
+        run: |
+          set -euxo pipefail
+          "$BUILD_TOOLS/apksigner" sign \
+            --ks hyperos.keystore --ks-key-alias esprivacy \
+            --ks-pass pass:changeit --key-pass pass:changeit \
+            --v1-signing-enabled true \
+            --v2-signing-enabled true \
+            --v3-signing-enabled true \
+            --v4-signing-enabled false \
+            --out ES_File_Explorer_4.4.3.7_Privacy_HyperOS.apk aligned.apk
+
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs \
+            ES_File_Explorer_4.4.3.7_Privacy_HyperOS.apk | tee apksigner-verify.txt
+
+          grep -q 'Verified using v1 scheme (JAR signing): true' apksigner-verify.txt
+          grep -q 'Verified using v2 scheme (APK Signature Scheme v2): true' apksigner-verify.txt
+          grep -q 'Verified using v3 scheme (APK Signature Scheme v3): true' apksigner-verify.txt
+          unzip -l ES_File_Explorer_4.4.3.7_Privacy_HyperOS.apk 'META-INF/*' | tee meta-inf.txt
+          sha256sum ES_File_Explorer_4.4.3.7_Privacy_HyperOS.apk | tee SHA256SUMS.txt
+
+      - name: Upload compatibility APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ES-Privacy-HyperOS-v1-v2-v3
+          path: |
+            ES_File_Explorer_4.4.3.7_Privacy_HyperOS.apk
+            apksigner-verify.txt
+            meta-inf.txt
+            SHA256SUMS.txt
+            patch-log.txt
+          retention-days: 30
+          if-no-files-found: error
