@@ -31,6 +31,9 @@ jobs:
       - name: Apply ES-style customization
         run: python3 scripts/customize.py upstream
 
+      - name: Strip Firebase/nonfree code
+        run: python3 scripts/strip_nonfree.py upstream
+
       - name: Build installable APK
         working-directory: upstream
         run: |
