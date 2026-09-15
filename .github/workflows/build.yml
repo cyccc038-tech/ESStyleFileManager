@@ -34,6 +34,9 @@ jobs:
       - name: Apply Android data compatibility mode
         run: python3 scripts/legacy_compat.py upstream
 
+      - name: Apply ES per-app Android data authorization
+        run: python3 scripts/es_android_data_auth.py upstream
+
       - name: Strip Firebase/nonfree code
         run: python3 scripts/strip_nonfree.py upstream
 
