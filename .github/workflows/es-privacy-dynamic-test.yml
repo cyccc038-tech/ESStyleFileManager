@@ -1,0 +1,83 @@
+name: ES Privacy Dynamic Network Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'security-test/**'
+      - '.github/workflows/es-privacy-dynamic-test.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  dynamic-test:
+    name: Android network capture (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [original, clean]
+
+    steps:
+      - name: Checkout test harness
+        uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Install packet analyzer
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tshark
+          mkdir -p results
+          chmod +x security-test/run_dynamic_test.sh security-test/analyze_pcap.sh
+
+      - name: Run ES in Android 11 emulator and capture all packets
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          profile: Nexus 5X
+          cores: 2
+          ram-size: 2048M
+          disk-size: 4096M
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+            -tcpdump ${{ github.workspace }}/results/${{ matrix.variant }}.pcap
+          script: bash security-test/run_dynamic_test.sh ${{ matrix.variant }}
+
+      - name: Analyze packet capture
+        if: always()
+        run: |
+          if [ -s "results/${{ matrix.variant }}.pcap" ]; then
+            bash security-test/analyze_pcap.sh "${{ matrix.variant }}"
+          else
+            echo "No PCAP was produced" | tee "results/${{ matrix.variant }}-no-pcap.txt"
+          fi
+
+      - name: Verify APK was not retained in artifact directory
+        if: always()
+        run: |
+          find results -type f \( -name '*.apk' -o -name '*.keystore' \) -delete || true
+          find results -maxdepth 2 -type f -printf '%p %s bytes\n' | sort > results/artifact-file-list.txt
+
+      - name: Upload dynamic-test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: es-privacy-dynamic-${{ matrix.variant }}
+          path: results/
+          if-no-files-found: warn
+          retention-days: 14
