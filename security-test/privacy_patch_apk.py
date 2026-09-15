@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import hashlib
-import shutil
 import struct
 import sys
-import tempfile
 import zipfile
 import zlib
 from pathlib import Path
@@ -50,18 +48,32 @@ BLOCKED_HOSTS = [
     "loggw-exsdk.alipay.com",
 ]
 
+# Longest first prevents a shorter substring such as log.snssdk.com from being changed inside
+# applog.snssdk.com / rtapplog.snssdk.com before the complete host is handled.
+BLOCKED_HOSTS = sorted(BLOCKED_HOSTS, key=len, reverse=True)
+
 
 def safe_replacement(host: str) -> bytes:
-    raw = host.encode("ascii")
-    prefix = b"127.0.0.1/"
-    if len(raw) >= len(prefix):
-        return prefix + b"x" * (len(raw) - len(prefix))
-    return b"x" * len(raw)
+    """Return a same-length, non-routable hostname while preserving DEX string ordering.
+
+    DEX string_ids are lexicographically sorted. Replacing a domain with an unrelated value such as
+    127.0.0.1 can make the string table unsorted, and Android then rejects the entire DEX at runtime
+    ("Out-of-order string_ids"). A minimal last-character change keeps each string in the same
+    lexical neighbourhood while making the final DNS label end in '-', which is invalid for a DNS
+    hostname and therefore cannot resolve to the original telemetry server.
+    """
+    if not host:
+        raise ValueError("empty host")
+    replacement = host[:-1] + "-"
+    if len(replacement) != len(host):
+        raise AssertionError("replacement length changed")
+    return replacement.encode("ascii")
 
 
 def fix_dex_header(data: bytearray) -> None:
     if not data.startswith(b"dex\n"):
         return
+    # DEX signature covers bytes 32..end; Adler32 covers bytes 12..end.
     data[12:32] = hashlib.sha1(data[32:]).digest()
     checksum = zlib.adler32(data[12:]) & 0xFFFFFFFF
     data[8:12] = struct.pack("<I", checksum)
@@ -97,7 +109,7 @@ def main() -> int:
     all_counts: dict[str, int] = {}
     with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(dst, "w", allowZip64=True) as zout:
         for info in zin.infolist():
-            # Drop v1 signature material because the output will be signed again with apksigner.
+            # Drop v1 signature material because the output is signed again with apksigner.
             upper = info.filename.upper()
             if upper.startswith("META-INF/") and (
                 upper.endswith(".RSA") or upper.endswith(".DSA") or upper.endswith(".EC")
@@ -117,9 +129,9 @@ def main() -> int:
 
     print(f"patched literals: {grand_total}")
     for host in BLOCKED_HOSTS:
-        print(f"{host}: {all_counts.get(host, 0)}")
+        print(f"{host}: {all_counts.get(host, 0)} -> {safe_replacement(host).decode('ascii')}")
 
-    # Verify the selected literals no longer occur in any DEX.
+    # Verify that the original telemetry names no longer occur in any DEX.
     leftovers = []
     with zipfile.ZipFile(dst, "r") as z:
         for name in z.namelist():
