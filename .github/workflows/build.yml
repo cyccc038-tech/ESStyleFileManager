@@ -40,6 +40,9 @@ jobs:
       - name: Apply v0.5 global Android data interception
         run: python3 scripts/v05_intercept.py upstream
 
+      - name: Apply v0.6 parent-tree SAF access
+        run: python3 scripts/v06_parent_tree.py upstream
+
       - name: Strip Firebase/nonfree code
         run: python3 scripts/strip_nonfree.py upstream
 
