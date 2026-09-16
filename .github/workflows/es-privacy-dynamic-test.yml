@@ -2,10 +2,6 @@ name: ES Privacy Dynamic Network Test
 
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - 'security-test/**'
-      - '.github/workflows/es-privacy-dynamic-test.yml'
 
 permissions:
   contents: read
