@@ -5,6 +5,7 @@ import asyncio
 import os
 import pathlib
 import subprocess
+import sys
 import threading
 
 ROOT = pathlib.Path(os.environ.get("ES_TEST_SERVER_ROOT", "/tmp/es-protocols"))
@@ -23,6 +24,16 @@ def start_process(cmd: list[str], logname: str) -> None:
     out = open(LOG / logname, "wb")
     _open_logs.append(out)
     procs.append(subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT))
+
+# Keep the harness self-contained if the workflow image changes or the dependency list regresses.
+# This runs before the FTP thread starts so listener readiness is deterministic.
+try:
+    import pyftpdlib  # noqa: F401
+except ModuleNotFoundError:
+    subprocess.check_call([
+        sys.executable, "-m", "pip", "install",
+        "--disable-pip-version-check", "--quiet", "pyftpdlib"
+    ])
 
 # Real FTP protocol server on 2121. Use the Python API so command-line changes across pyftpdlib
 # releases cannot silently invalidate the audit.
