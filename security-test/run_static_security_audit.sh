@@ -51,7 +51,8 @@ grep -Ei 'google|googleapis|microsoft|live\.com|onedrive|baidu|pcs|dropbox|box\.
   "$OUT/http-urls.txt" "$OUT/host-like-strings.txt" > "$OUT/functional-network-endpoints.txt" || true
 
 # High-risk data APIs and accessibility implementation markers. Only symbol/call-name evidence is
-# emitted, not proprietary source bodies.
+# emitted, not proprietary source bodies. awk is used so a legitimate count of zero does not make
+# the audit fail under set -e/pipefail.
 for token in \
   'TelephonyManager' 'getDeviceId' 'getImei' 'getSubscriberId' 'getSimSerialNumber' \
   'Settings$Secure' 'ANDROID_ID' 'AdvertisingIdClient' 'getAdvertisingIdInfo' \
@@ -60,7 +61,7 @@ for token in \
   'AutoAuthService' 'AuthServiceHelper' 'AccessibilityService' \
   'findAccessibilityNodeInfosByText' 'performAction' 'performGlobalAction' \
   'takePersistableUriPermission' 'DocumentsContract'; do
-  count="$(grep -F "$token" "$OUT/all-dex-strings.txt" | wc -l | tr -d ' ')"
+  count="$(awk -v needle="$token" 'index($0, needle) { n++ } END { print n+0 }' "$OUT/all-dex-strings.txt")"
   printf '%s\t%s\n' "$token" "$count"
 done > "$OUT/high-risk-api-symbol-counts.tsv"
 
