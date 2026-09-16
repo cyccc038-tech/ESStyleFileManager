@@ -35,9 +35,8 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq tshark unzip zip curl python3-pip
-          python3 -m pip install --disable-pip-version-check --quiet \
-            pyftpdlib asyncssh wsgidav cheroot impacket
+          sudo apt-get install -y -qq tshark unzip zip curl python3-pip vsftpd samba
+          python3 -m pip install --disable-pip-version-check --quiet asyncssh wsgidav cheroot
           chmod +x security-test/*.sh
           mkdir -p results
 
@@ -98,13 +97,14 @@ jobs:
           ]
           rows=[]
           if root.exists():
+            java_files=list(root.rglob('*.java'))
             for token in tokens:
-              files=[]
-              for p in root.rglob('*.java'):
+              matches=[]
+              for p in java_files:
                 try: t=p.read_text(errors='ignore')
                 except Exception: continue
-                if token in t: files.append(str(p.relative_to(root)))
-              rows.append((token,len(files),';'.join(files[:40])))
+                if token in t: matches.append(str(p.relative_to(root)))
+              rows.append((token,len(matches),';'.join(matches[:40])))
           out.write_text('\n'.join(f'{a}\t{b}\t{c}' for a,b,c in rows)+'\n',encoding='utf-8')
           PY
           rm -rf /tmp/es-jadx /tmp/jadx /tmp/jadx.zip
@@ -112,14 +112,81 @@ jobs:
       - name: Start disposable FTP SFTP WebDAV SMB servers
         run: |
           set -euxo pipefail
+          mkdir -p /tmp/es-protocol-logs /tmp/es-protocols/{ftp,sftp,webdav,smb}
+          for p in ftp sftp webdav smb; do
+            printf 'ES_REMOTE_CANARY_7A9C41D3 %s read test\n' "$p" > "/tmp/es-protocols/$p/readme.txt"
+            printf 'ES_REMOTE_CANARY_7A9C41D3 %s hidden\n' "$p" > "/tmp/es-protocols/$p/.hidden_remote_test"
+          done
+
+          # SFTP + WebDAV.
           nohup python3 security-test/protocol_servers.py >/tmp/es-protocol-main.log 2>&1 &
           echo $! >/tmp/es-protocol-main.pid
-          sleep 6
+
+          # A real local account is used by both vsftpd and Samba in this disposable runner only.
+          sudo useradd -M -d /tmp/es-protocols/ftp -s /bin/bash esuser 2>/dev/null || true
+          echo 'esuser:espass' | sudo chpasswd
+          sudo chown -R esuser:esuser /tmp/es-protocols/ftp /tmp/es-protocols/smb
+
+          # FTP on 2121.
+          cat >/tmp/es-vsftpd.conf <<'EOF'
+          listen=YES
+          listen_ipv6=NO
+          listen_address=0.0.0.0
+          listen_port=2121
+          anonymous_enable=NO
+          local_enable=YES
+          write_enable=YES
+          local_umask=022
+          chroot_local_user=YES
+          allow_writeable_chroot=YES
+          local_root=/tmp/es-protocols/ftp
+          pam_service_name=vsftpd
+          seccomp_sandbox=NO
+          pasv_enable=YES
+          pasv_min_port=30000
+          pasv_max_port=30010
+          xferlog_enable=YES
+          log_ftp_protocol=YES
+          vsftpd_log_file=/tmp/es-protocol-logs/ftp.log
+          EOF
+          sudo /usr/sbin/vsftpd /tmp/es-vsftpd.conf &
+
+          # SMB on 445 with SMB1 through SMB3 enabled so legacy ES negotiation is covered.
+          printf 'espass\nespass\n' | sudo smbpasswd -a -s esuser
+          cat >/tmp/es-smb.conf <<'EOF'
+          [global]
+             workgroup = WORKGROUP
+             security = user
+             map to guest = Never
+             server min protocol = NT1
+             server max protocol = SMB3
+             ntlm auth = yes
+             smb ports = 445
+             logging = file
+             log file = /tmp/es-protocol-logs/smbd.log
+             max log size = 1000
+             load printers = no
+             disable spoolss = yes
+
+          [SHARE]
+             path = /tmp/es-protocols/smb
+             read only = no
+             browsable = yes
+             guest ok = no
+             valid users = esuser
+          EOF
+          sudo /usr/sbin/smbd --foreground --no-process-group --configfile=/tmp/es-smb.conf \
+            >/tmp/es-protocol-logs/smb-launch.log 2>&1 &
+
+          sleep 8
           ss -lntp | tee results/protocol-listeners.txt
-          # At minimum FTP, SFTP, WebDAV must be listening; SMB evidence is recorded separately if port 445 is unavailable.
+          cat /tmp/es-protocol-main.log || true
+          for f in /tmp/es-protocol-logs/*; do echo "===== $f ====="; cat "$f" || true; done
+
           grep -q ':2121 ' results/protocol-listeners.txt
           grep -q ':2222 ' results/protocol-listeners.txt
           grep -q ':8080 ' results/protocol-listeners.txt
+          grep -q ':445 ' results/protocol-listeners.txt
 
       - name: Enable KVM
         run: |
@@ -165,6 +232,22 @@ jobs:
                '## 发布策略','- 当前测试密钥仅用于云端自动化，绝不作为用户长期升级签名。','- 长期签名必须使用用户私有 keystore；公开仓库不能安全保存该私钥。','- 在没有证据证明某项高权限仅用于跟踪前，不直接删除权限，以避免破坏 ES 的 Android/data、应用管理、局域网/云盘等边缘功能。']
           (root/'FINAL_AUDIT_REPORT.md').write_text('\n'.join(out)+'\n',encoding='utf-8')
           PY
+
+      - name: Print decisive audit evidence
+        if: always()
+        run: |
+          echo '========== FINAL_AUDIT_REPORT.md =========='
+          cat results/FINAL_AUDIT_REPORT.md 2>/dev/null || true
+          echo '========== TELEMETRY NETWORK HITS =========='
+          cat results/full/telemetry-network-hits.txt 2>/dev/null || true
+          echo '========== CANARY RESULTS =========='
+          cat results/full/canary-results.txt 2>/dev/null || true
+          echo '========== APP OPS DIFF =========='
+          cat results/full/appops-diff.txt 2>/dev/null || true
+          echo '========== CRASH SUMMARY =========='
+          cat results/full/crash-and-permission-summary.txt 2>/dev/null || true
+          echo '========== PROTOCOL SERVER LOGS =========='
+          for f in results/full/protocol-server-logs/*; do echo "===== $f ====="; cat "$f" || true; done
 
       - name: Remove proprietary APKs and signing material before upload
         if: always()
