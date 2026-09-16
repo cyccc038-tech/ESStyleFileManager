@@ -1,0 +1,184 @@
+name: ES Full Privacy and Regression Audit
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/es-full-security-audit.yml'
+      - 'security-test/run_static_security_audit.sh'
+      - 'security-test/run_comprehensive_dynamic.sh'
+      - 'security-test/analyze_comprehensive.sh'
+      - 'security-test/protocol_servers.py'
+      - 'security-test/patch_dex_only.py'
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    steps:
+      - name: Checkout audit harness
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install audit and disposable protocol tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq tshark unzip zip curl python3-pip
+          python3 -m pip install --disable-pip-version-check --quiet \
+            pyftpdlib asyncssh wsgidav cheroot impacket
+          chmod +x security-test/*.sh
+          mkdir -p results
+
+      - name: Download exact user-tested Balatan build
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 5 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+
+      - name: Build DEX-safe privacy test APK
+        run: |
+          set -euxo pipefail
+          cp source.apk work.apk
+          mkdir -p dex
+          for n in '' 2 3 4 5 6 7 8; do unzip -p source.apk "classes${n}.dex" > "dex/classes${n}.dex"; done
+          python3 security-test/patch_dex_only.py dex/classes*.dex | tee results/patch-log.txt
+          zip -q -d work.apk 'META-INF/*.SF' 'META-INF/*.RSA' 'META-INF/*.DSA' 'META-INF/*.EC' 'META-INF/MANIFEST.MF' || true
+          (cd dex && zip -q -9 -u ../work.apk classes.dex classes2.dex classes3.dex classes4.dex classes5.dex classes6.dex classes7.dex classes8.dex)
+
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          echo "BUILD_TOOLS=$BUILD_TOOLS" >> "$GITHUB_ENV"
+          "$BUILD_TOOLS/zipalign" -f -p 4 work.apk aligned.apk
+          "$BUILD_TOOLS/zipalign" -c -p 4 aligned.apk
+          keytool -genkeypair -noprompt -keystore test.keystore -storepass changeit -keypass changeit \
+            -alias test -keyalg RSA -keysize 2048 -sigalg SHA256withRSA -validity 30 \
+            -dname 'CN=Disposable ES Security Test, O=Cloud Audit, C=US'
+          "$BUILD_TOOLS/apksigner" sign --ks test.keystore --ks-key-alias test \
+            --ks-pass pass:changeit --key-pass pass:changeit \
+            --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+            --v4-signing-enabled false --out test-clean.apk aligned.apk
+          "$BUILD_TOOLS/apksigner" verify --verbose test-clean.apk | tee results/test-apk-signature.txt
+          sha256sum source.apk test-clean.apk | tee results/apk-hashes.txt
+
+      - name: Static audit original and privacy build
+        run: |
+          set -euxo pipefail
+          bash security-test/run_static_security_audit.sh source.apk results/static-original
+          bash security-test/run_static_security_audit.sh test-clean.apk results/static-clean
+
+      - name: Decompile only for call-site inventory then delete source output
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 4 --retry-all-errors \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip -o /tmp/jadx.zip
+          unzip -q /tmp/jadx.zip -d /tmp/jadx
+          /tmp/jadx/bin/jadx --no-res --no-imports -d /tmp/es-jadx source.apk >/tmp/jadx.log 2>&1 || true
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('/tmp/es-jadx/sources')
+          out=Path('results/static-original/callsite-class-index.tsv')
+          tokens=[
+            'getDeviceId','getImei','getSubscriberId','getSimSerialNumber','ANDROID_ID',
+            'AdvertisingIdClient','getAdvertisingIdInfo','getLastKnownLocation','requestLocationUpdates',
+            'getSSID','getBSSID','getMacAddress','AutoAuthService','AuthServiceHelper',
+            'findAccessibilityNodeInfosByText','performGlobalAction','takePersistableUriPermission',
+            'com.android.documentsui','com.google.android.documentsui'
+          ]
+          rows=[]
+          if root.exists():
+            for token in tokens:
+              files=[]
+              for p in root.rglob('*.java'):
+                try: t=p.read_text(errors='ignore')
+                except Exception: continue
+                if token in t: files.append(str(p.relative_to(root)))
+              rows.append((token,len(files),';'.join(files[:40])))
+          out.write_text('\n'.join(f'{a}\t{b}\t{c}' for a,b,c in rows)+'\n',encoding='utf-8')
+          PY
+          rm -rf /tmp/es-jadx /tmp/jadx /tmp/jadx.zip
+
+      - name: Start disposable FTP SFTP WebDAV SMB servers
+        run: |
+          set -euxo pipefail
+          nohup python3 security-test/protocol_servers.py >/tmp/es-protocol-main.log 2>&1 &
+          echo $! >/tmp/es-protocol-main.pid
+          sleep 6
+          ss -lntp | tee results/protocol-listeners.txt
+          # At minimum FTP, SFTP, WebDAV must be listening; SMB evidence is recorded separately if port 445 is unavailable.
+          grep -q ':2121 ' results/protocol-listeners.txt
+          grep -q ':2222 ' results/protocol-listeners.txt
+          grep -q ':8080 ' results/protocol-listeners.txt
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm || true
+          sudo chmod 666 /dev/kvm || true
+
+      - name: Run comprehensive Android 11 runtime test and packet capture
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          target: default
+          arch: x86_64
+          profile: Nexus 5X
+          cores: 2
+          ram-size: 3072M
+          disk-size: 6144M
+          disable-animations: true
+          emulator-options: >-
+            -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+            -camera-back none -camera-front none
+            -tcpdump ${{ github.workspace }}/results/full.pcap
+          script: bash security-test/run_comprehensive_dynamic.sh
+
+      - name: Analyze PCAP, AppOps, crash logs and protocol server logs
+        if: always()
+        run: |
+          bash security-test/analyze_comprehensive.sh || true
+          cp /tmp/es-protocol-main.log results/full/protocol-main.log 2>/dev/null || true
+
+      - name: Produce final combined decision report
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('results')
+          s=(root/'static-clean'/'STATIC_AUDIT.md').read_text(errors='ignore') if (root/'static-clean'/'STATIC_AUDIT.md').exists() else 'Static audit unavailable'
+          d=(root/'full'/'COMPREHENSIVE_AUDIT.md').read_text(errors='ignore') if (root/'full'/'COMPREHENSIVE_AUDIT.md').exists() else 'Dynamic audit unavailable'
+          call=(root/'static-original'/'callsite-class-index.tsv').read_text(errors='ignore') if (root/'static-original'/'callsite-class-index.tsv').exists() else ''
+          out=['# ES 隐私净化版：云端全量复核报告','',
+               '## 静态审计',s,'','## 动态/网络/回归审计',d,'','## 高风险 API 调用类索引','```',call[:30000],'```','',
+               '## 发布策略','- 当前测试密钥仅用于云端自动化，绝不作为用户长期升级签名。','- 长期签名必须使用用户私有 keystore；公开仓库不能安全保存该私钥。','- 在没有证据证明某项高权限仅用于跟踪前，不直接删除权限，以避免破坏 ES 的 Android/data、应用管理、局域网/云盘等边缘功能。']
+          (root/'FINAL_AUDIT_REPORT.md').write_text('\n'.join(out)+'\n',encoding='utf-8')
+          PY
+
+      - name: Remove proprietary APKs and signing material before upload
+        if: always()
+        run: |
+          rm -f source.apk work.apk aligned.apk test-clean.apk test.keystore
+          rm -rf dex
+          find results -type f \( -name '*.apk' -o -name '*.keystore' -o -name '*.dex' \) -delete || true
+          find results -type f -printf '%p\t%s bytes\n' | sort > results/ARTIFACT_FILES.txt
+
+      - name: Upload complete audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ES-full-security-audit
+          path: results/
+          if-no-files-found: error
+          retention-days: 30
