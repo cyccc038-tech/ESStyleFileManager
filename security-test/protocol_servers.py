@@ -12,10 +12,8 @@ LOG = pathlib.Path(os.environ.get("ES_TEST_SERVER_LOG", "/tmp/es-protocol-logs")
 ROOT.mkdir(parents=True, exist_ok=True)
 LOG.mkdir(parents=True, exist_ok=True)
 
-# The workflow creates all fixture files before this process starts. Do not rewrite them here: FTP
-# and SMB fixture directories are intentionally chowned to the disposable login user and racing a
-# second write from this unprivileged helper can fail.
-for name in ("sftp", "webdav"):
+# The workflow creates all fixture files before this process starts.
+for name in ("ftp", "sftp", "webdav"):
     (ROOT / name).mkdir(parents=True, exist_ok=True)
 
 procs: list[subprocess.Popen] = []
@@ -26,6 +24,31 @@ def start_process(cmd: list[str], logname: str) -> None:
     _open_logs.append(out)
     procs.append(subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT))
 
+# Real FTP protocol server on 2121. Use the Python API so command-line changes across pyftpdlib
+# releases cannot silently invalidate the audit.
+def run_ftp() -> None:
+    from pyftpdlib.authorizers import DummyAuthorizer
+    from pyftpdlib.handlers import FTPHandler
+    from pyftpdlib.servers import FTPServer
+
+    try:
+        authorizer = DummyAuthorizer()
+        authorizer.add_user(
+            "esuser", "espass", str(ROOT / "ftp"), perm="elradfmwMT"
+        )
+        handler = FTPHandler
+        handler.authorizer = authorizer
+        handler.banner = "ES disposable privacy-audit FTP"
+        server = FTPServer(("0.0.0.0", 2121), handler)
+        with open(LOG / "ftp.log", "a", encoding="utf-8") as f:
+            f.write("FTP listening on 2121\n")
+        server.serve_forever(timeout=0.5, blocking=True, handle_exit=False)
+    except Exception as exc:
+        with open(LOG / "ftp.log", "a", encoding="utf-8") as f:
+            f.write(f"FTP startup/runtime error: {type(exc).__name__}: {exc}\n")
+
+threading.Thread(target=run_ftp, name="es-audit-ftp", daemon=True).start()
+
 # WebDAV on 8080. Anonymous is intentional: this test is about transport and file-system behavior,
 # not password storage. ES still has to enumerate/read/write through its WebDAV implementation.
 start_process([
@@ -33,8 +56,6 @@ start_process([
     "--auth=anonymous"
 ], "webdav.log")
 
-# FTP and SMB are provided by system vsftpd/smbd from the workflow.
-(LOG / "ftp.log").write_text("FTP is provided by system vsftpd on port 2121\n", encoding="utf-8")
 (LOG / "smb.log").write_text("SMB is provided by system smbd on port 445\n", encoding="utf-8")
 
 # SFTP is implemented in-process with asyncssh so no system sshd configuration is required.
