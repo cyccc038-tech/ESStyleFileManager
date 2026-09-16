@@ -21,10 +21,12 @@ jobs:
           test -x "$BUILD_TOOLS/apksigner"
           test -x "$BUILD_TOOLS/zipalign"
           test -f "$BUILD_TOOLS/lib/apksigner.jar"
-          mkdir -p export/lib
+          test -f "$BUILD_TOOLS/lib64/libc++.so"
+          mkdir -p export/lib export/lib64
           cp "$BUILD_TOOLS/apksigner" export/apksigner
           cp "$BUILD_TOOLS/zipalign" export/zipalign
           cp "$BUILD_TOOLS/lib/apksigner.jar" export/lib/apksigner.jar
+          cp "$BUILD_TOOLS/lib64/libc++.so" export/lib64/libc++.so
           chmod +x export/apksigner export/zipalign
           printf '%s\n' "$BUILD_TOOLS" > export/source-build-tools.txt
       - name: Upload signing tools only
