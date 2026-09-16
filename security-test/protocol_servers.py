@@ -11,13 +11,12 @@ ROOT = pathlib.Path(os.environ.get("ES_TEST_SERVER_ROOT", "/tmp/es-protocols"))
 LOG = pathlib.Path(os.environ.get("ES_TEST_SERVER_LOG", "/tmp/es-protocol-logs"))
 ROOT.mkdir(parents=True, exist_ok=True)
 LOG.mkdir(parents=True, exist_ok=True)
-CANARY = "ES_REMOTE_CANARY_7A9C41D3"
 
-for name in ("ftp", "sftp", "webdav", "smb"):
-    p = ROOT / name
-    p.mkdir(parents=True, exist_ok=True)
-    (p / "readme.txt").write_text(f"{CANARY} {name} read test\n", encoding="utf-8")
-    (p / ".hidden_remote_test").write_text(f"{CANARY} {name} hidden\n", encoding="utf-8")
+# The workflow creates all fixture files before this process starts. Do not rewrite them here: FTP
+# and SMB fixture directories are intentionally chowned to the disposable login user and racing a
+# second write from this unprivileged helper can fail.
+for name in ("sftp", "webdav"):
+    (ROOT / name).mkdir(parents=True, exist_ok=True)
 
 procs: list[subprocess.Popen] = []
 _open_logs = []
@@ -34,9 +33,7 @@ start_process([
     "--auth=anonymous"
 ], "webdav.log")
 
-# FTP and SMB are deliberately provided by system vsftpd/smbd from the workflow. Those daemons are
-# materially closer to the real servers ES users connect to and are more stable than test-library
-# command-line wrappers on GitHub runner images.
+# FTP and SMB are provided by system vsftpd/smbd from the workflow.
 (LOG / "ftp.log").write_text("FTP is provided by system vsftpd on port 2121\n", encoding="utf-8")
 (LOG / "smb.log").write_text("SMB is provided by system smbd on port 445\n", encoding="utf-8")
 
@@ -60,7 +57,9 @@ async def sftp_main() -> None:
         "0.0.0.0",
         2222,
         server_host_keys=[host_key],
-        sftp_factory=lambda chan: asyncssh.SFTPServer(chan, chroot=str(ROOT / "sftp")),
+        sftp_factory=lambda chan: asyncssh.SFTPServer(
+            chan, chroot=str(ROOT / "sftp")
+        ),
     )
     with open(LOG / "sftp.log", "a", encoding="utf-8") as f:
         f.write("SFTP listening on 2222\n")
@@ -71,5 +70,4 @@ try:
 except Exception as exc:
     with open(LOG / "sftp.log", "a", encoding="utf-8") as f:
         f.write(f"SFTP startup/runtime error: {type(exc).__name__}: {exc}\n")
-    # Keep the parent alive so WebDAV and diagnostics remain available.
     threading.Event().wait()
