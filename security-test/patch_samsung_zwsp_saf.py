@@ -277,6 +277,21 @@ def replace_once(text, old, new, name):
     return text.replace(old, new, 1)
 
 
+def replace_once_in_method(text, signature, old, new, name):
+    start = text.find(signature)
+    if start < 0:
+        raise RuntimeError(f'{name}: method signature not found')
+    end = text.find('.end method', start)
+    if end < 0:
+        raise RuntimeError(f'{name}: method end not found')
+    segment = text[start:end]
+    n = segment.count(old)
+    if n != 1:
+        raise RuntimeError(f'{name}: expected one method-local match, got {n}')
+    segment = segment.replace(old, new, 1)
+    return text[:start] + segment + text[end:]
+
+
 def patch(root: Path):
     es = root / 'es'
     (es / 'v52s.smali').write_text(HELPER, encoding='utf-8')
@@ -382,20 +397,20 @@ def patch(root: Path):
 '''
     s = replace_once(s, marker, injected, 'h41 p special auth return')
 
-    marker = '''.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;
-    .locals 7
-
-    invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
+    marker = '''    invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
 '''
-    injected = '''.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;
-    .locals 7
-
-    invoke-static {p0}, Les/v52s;->h(Landroid/net/Uri;)Landroid/net/Uri;
+    injected = '''    invoke-static {p0}, Les/v52s;->h(Landroid/net/Uri;)Landroid/net/Uri;
     move-result-object p0
 
     invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
 '''
-    s = replace_once(s, marker, injected, 'h41 query manage')
+    s = replace_once_in_method(
+        s,
+        '.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;',
+        marker,
+        injected,
+        'h41 query manage',
+    )
     p.write_text(s, encoding='utf-8')
 
     p = es / 'oa5.smali'
