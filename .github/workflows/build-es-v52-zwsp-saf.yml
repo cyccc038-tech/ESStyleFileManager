@@ -1,0 +1,129 @@
+name: Build ES V5.2 One-Shot SAF
+
+on:
+  push:
+    paths:
+      - 'security-test/patch_samsung_zwsp_saf.py'
+      - 'security-test/patch_dex_only.py'
+      - '.github/workflows/build-es-v52-zwsp-saf.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq smali unzip zip
+          command -v baksmali
+          command -v smali
+
+      - name: Download exact ES 4.4.3.7 source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 5 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+
+      - name: Apply V5 privacy patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p dex
+          for n in '' 2 3 4 5 6 7 8; do
+            unzip -p source.apk "classes${n}.dex" > "dex/classes${n}.dex"
+          done
+          python3 security-test/patch_dex_only.py dex/classes*.dex | tee privacy-patch-log.txt
+          grep -q 'patched literals total=143' privacy-patch-log.txt
+
+      - name: Apply Samsung Android 15/16 one-shot SAF patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          baksmali disassemble dex/classes5.dex -o smali5
+          python3 security-test/patch_samsung_zwsp_saf.py smali5 | tee saf-patch-log.txt
+          test -f smali5/es/v52s.smali
+          grep -q 'v52_special_auth' 'smali5/es/i41$h.smali'
+          grep -q 'v52_p_normal' smali5/es/h41.smali
+          grep -q 'v52_oa5_l_normal' smali5/es/oa5.smali
+          smali assemble smali5 -o dex/classes5.dex
+
+      - name: Validate rebuilt DEX
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf verify-smali
+          baksmali disassemble dex/classes5.dex -o verify-smali
+          test -f verify-smali/es/v52s.smali
+          grep -q 'manage' verify-smali/es/v52s.smali
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, struct, zlib
+          for p in sorted(Path('dex').glob('classes*.dex')):
+              d=p.read_bytes()
+              assert d[:4] == b'dex\n'
+              assert d[12:32] == hashlib.sha1(d[32:]).digest(), p
+              assert struct.unpack('<I',d[8:12])[0] == (zlib.adler32(d[12:]) & 0xffffffff), p
+              print(p.name, len(d), hashlib.sha256(d).hexdigest())
+          PY
+
+      - name: Rebuild APK while preserving original resources/native files
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp source.apk work.apk
+          zip -q -d work.apk 'META-INF/BALA.SF' 'META-INF/BALA.RSA' 'META-INF/MANIFEST.MF' || true
+          (cd dex && zip -q -9 -u ../work.apk classes.dex classes2.dex classes3.dex classes4.dex classes5.dex classes6.dex classes7.dex classes8.dex)
+          unzip -t work.apk | tail -2
+
+      - name: Zipalign unsigned APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          "$BUILD_TOOLS/zipalign" -f -p 4 work.apk ES_V52_OneShot_SAF_unsigned.apk
+          "$BUILD_TOOLS/zipalign" -c -p 4 ES_V52_OneShot_SAF_unsigned.apk
+          sha256sum ES_V52_OneShot_SAF_unsigned.apk > SHA256_UNSIGNED.txt
+
+      - name: Static scope report
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > PATCH_REPORT.txt <<'EOF'
+          ES V5.2 Samsung One-Shot SAF test
+          - Base: ES File Explorer 4.4.3.7 build 10353
+          - Preserves V5 telemetry/privacy hostname patch
+          - New behavior active only on API 35+
+          - One ACTION_OPEN_DOCUMENT_TREE authorization rooted at ZWSP Android alias
+          - Persisted URI is reused for Android/data and Android/obb subpaths
+          - Child queries on the special tree use manage=1
+          - No account/payment/network/license code modified by this SAF patch
+          - Xiaomi Android 14 remains on the pre-existing ES path
+          EOF
+          cat privacy-patch-log.txt saf-patch-log.txt >> PATCH_REPORT.txt
+
+      - name: Remove source/disassembly before artifact
+        shell: bash
+        run: |
+          rm -f source.apk work.apk
+          rm -rf dex smali5 verify-smali
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ES-V52-OneShot-SAF-unsigned
+          path: |
+            ES_V52_OneShot_SAF_unsigned.apk
+            SHA256_UNSIGNED.txt
+            PATCH_REPORT.txt
+          retention-days: 3
+          if-no-files-found: error
