@@ -365,6 +365,18 @@ def patch(root: Path):
     invoke-static {v0}, Les/h41;->n(Ljava/lang/String;)Les/h41$c;
 
     move-result-object v2
+
+    invoke-static {v0}, Les/v52s;->c(Ljava/lang/String;)Z
+    move-result v15
+    if-eqz v15, :v52_keep_old_grant
+
+    invoke-static {}, Les/v52s;->e()Z
+    move-result v15
+    if-nez v15, :v52_keep_old_grant
+
+    const/4 v2, 0x0
+
+    :v52_keep_old_grant
 '''
     s = replace_once(s, marker, injected, 'h41 p fastpath')
 
