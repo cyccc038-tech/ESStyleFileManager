@@ -45,6 +45,8 @@ jobs:
             -path '*/es/i41*.smali' -o \
             -path '*/es/h41*.smali' -o \
             -path '*/es/oa5*.smali' -o \
+            -path '*/es/c56*.smali' -o \
+            -path '*/es/hc1$h*.smali' -o \
             -path '*/es/up4*.smali' -o \
             -path '*/com/estrongs/fs/impl/local/AuthServiceHelper*.smali' \
           \) -print -exec cp --parents '{}' inspect/ \;
