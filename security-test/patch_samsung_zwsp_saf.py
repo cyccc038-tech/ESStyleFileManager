@@ -331,13 +331,11 @@ def patch(root: Path):
 
     p = es / 'h41.smali'
     s = p.read_text(encoding='utf-8')
-    marker = '''    :cond_0
-    :goto_0
-    invoke-static {v0}, Les/h41;->n(Ljava/lang/String;)Les/h41$c;
+    marker = '''    invoke-static {v0}, Les/h41;->n(Ljava/lang/String;)Les/h41$c;
+
+    move-result-object v2
 '''
-    injected = '''    :cond_0
-    :goto_0
-    invoke-static {v0}, Les/v52s;->f(Ljava/lang/String;)Z
+    injected = '''    invoke-static {v0}, Les/v52s;->f(Ljava/lang/String;)Z
     move-result v2
     if-eqz v2, :v52_p_normal
 
@@ -350,14 +348,16 @@ def patch(root: Path):
 
     :v52_p_normal
     invoke-static {v0}, Les/h41;->n(Ljava/lang/String;)Les/h41$c;
+
+    move-result-object v2
 '''
     s = replace_once(s, marker, injected, 'h41 p fastpath')
 
-    marker = '''    :cond_12
-    new-instance v12, Les/h41$c;
+    marker = '''    new-instance v12, Les/h41$c;
+
+    invoke-direct {v12}, Les/h41$c;-><init>()V
 '''
-    injected = '''    :cond_12
-    iget-object v6, v0, Les/hc1$h;->e:Landroid/net/Uri;
+    injected = '''    iget-object v6, v0, Les/hc1$h;->e:Landroid/net/Uri;
     invoke-static {v6}, Les/v52s;->g(Landroid/net/Uri;)Z
     move-result v6
     if-eqz v6, :v52_old_auth_validate
@@ -377,6 +377,8 @@ def patch(root: Path):
 
     :v52_old_auth_validate
     new-instance v12, Les/h41$c;
+
+    invoke-direct {v12}, Les/h41$c;-><init>()V
 '''
     s = replace_once(s, marker, injected, 'h41 p special auth return')
 
