@@ -1,0 +1,220 @@
+name: Build ES V5.1 Samsung SAF Dex
+
+on:
+  push:
+    paths:
+      - '.github/workflows/es-v51-samsung-saf-dex.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dex assembler tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq smali unzip curl
+          command -v baksmali
+          command -v smali
+
+      - name: Download exact ES source and extract classes5
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 5 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+          unzip -p source.apk classes5.dex > classes5-original.dex
+          echo '342928bbc8a985516317dec8162761cdd2ca4d67dd7c21f4f26275625a27e160  classes5-original.dex' | sha256sum -c -
+
+      - name: Disassemble and add Android 15+ SAF manage query fallback
+        shell: bash
+        run: |
+          set -euxo pipefail
+          baksmali disassemble classes5-original.dex -o smali5
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('smali5/es/h41.smali')
+          s=p.read_text(encoding='utf-8')
+          sig='.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;'
+          a=s.index(sig)
+          b=s.index('.end method',a)+len('.end method')
+          old=s[a:b]
+          new=r'''.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;
+              .locals 9
+
+              sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+
+              const/16 v7, 0x23
+
+              if-lt v0, v7, :v51_check_authority
+
+              goto :v51_manage_done
+
+              :v51_check_authority
+              invoke-virtual {p0}, Landroid/net/Uri;->getAuthority()Ljava/lang/String;
+
+              move-result-object v0
+
+              const-string v7, "com.android.externalstorage.documents"
+
+              invoke-virtual {v7, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+              move-result v0
+
+              if-eqz v0, :v51_manage_done
+
+              invoke-virtual {p0}, Landroid/net/Uri;->getLastPathSegment()Ljava/lang/String;
+
+              move-result-object v0
+
+              const-string v7, "children"
+
+              invoke-virtual {v7, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+
+              move-result v0
+
+              if-eqz v0, :v51_manage_done
+
+              invoke-virtual {p0}, Landroid/net/Uri;->getPath()Ljava/lang/String;
+
+              move-result-object v0
+
+              if-eqz v0, :v51_manage_done
+
+              const-string v7, "Android/data"
+
+              invoke-virtual {v0, v7}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+
+              move-result v7
+
+              if-nez v7, :v51_enable_manage
+
+              const-string v7, "Android/obb"
+
+              invoke-virtual {v0, v7}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+
+              move-result v0
+
+              if-eqz v0, :v51_manage_done
+
+              :v51_enable_manage
+              invoke-virtual {p0}, Landroid/net/Uri;->buildUpon()Landroid/net/Uri$Builder;
+
+              move-result-object v0
+
+              const-string v7, "manage"
+
+              const-string v8, "true"
+
+              invoke-virtual {v0, v7, v8}, Landroid/net/Uri$Builder;->appendQueryParameter(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri$Builder;
+
+              move-result-object v0
+
+              invoke-virtual {v0}, Landroid/net/Uri$Builder;->build()Landroid/net/Uri;
+
+              move-result-object p0
+
+              :v51_manage_done
+              invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
+
+              move-result-object v0
+
+              invoke-virtual {v0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
+
+              move-result-object v1
+
+              const/4 v4, 0x0
+
+              const/4 v5, 0x0
+
+              const/4 v6, 0x0
+
+              move-object v2, p0
+
+              move-object v3, p1
+
+              :try_start_0
+              invoke-virtual/range {v1 .. v6}, Landroid/content/ContentResolver;->query(Landroid/net/Uri;[Ljava/lang/String;Ljava/lang/String;[Ljava/lang/String;Ljava/lang/String;)Landroid/database/Cursor;
+
+              move-result-object p0
+              :try_end_0
+              .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
+
+              goto :goto_0
+
+              :catch_0
+              move-exception p0
+
+              invoke-virtual {p0}, Ljava/lang/Throwable;->printStackTrace()V
+
+              const/4 p0, 0x0
+
+              :goto_0
+              return-object p0
+          .end method'''
+          if 'appendQueryParameter' in old or 'v51_enable_manage' in old:
+              raise SystemExit('method already patched unexpectedly')
+          s=s[:a]+new+s[b:]
+          p.write_text(s,encoding='utf-8')
+          Path('PATCH_REPORT.txt').write_text(
+              'V5.1 Samsung SAF test patch\n'
+              '- scope: h41.query only\n'
+              '- SDK: >=35 only\n'
+              '- authority: com.android.externalstorage.documents only\n'
+              '- query: children only\n'
+              '- path: Android/data or Android/obb only\n'
+              '- behavior: append manage=true to the existing user-authorized tree query\n'
+              '- no account/payment/license code touched\n',
+              encoding='utf-8')
+          PY
+
+      - name: Reassemble and validate DEX
+        shell: bash
+        run: |
+          set -euxo pipefail
+          smali assemble smali5 -o classes5-v51-samsung-saf.dex
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, struct, zlib
+          p=Path('classes5-v51-samsung-saf.dex')
+          d=p.read_bytes()
+          assert d[:4]==b'dex\n'
+          stored_adler=struct.unpack('<I',d[8:12])[0]
+          stored_sha=d[12:32]
+          assert stored_sha==hashlib.sha1(d[32:]).digest()
+          assert stored_adler==(zlib.adler32(d[12:]) & 0xffffffff)
+          print('DEX header SHA1/Adler32: OK')
+          print('size=',len(d))
+          print('sha256=',hashlib.sha256(d).hexdigest())
+          PY
+          sha256sum classes5-original.dex classes5-v51-samsung-saf.dex | tee DEX_HASHES.txt
+          test "$(sha256sum classes5-original.dex | cut -d' ' -f1)" != "$(sha256sum classes5-v51-samsung-saf.dex | cut -d' ' -f1)"
+
+      - name: Remove proprietary source APK and disassembly
+        shell: bash
+        run: |
+          rm -f source.apk classes5-original.dex
+          rm -rf smali5
+
+      - name: Upload patched DEX only
+        uses: actions/upload-artifact@v4
+        with:
+          name: ES-V51-Samsung-SAF-dex
+          path: |
+            classes5-v51-samsung-saf.dex
+            PATCH_REPORT.txt
+            DEX_HASHES.txt
+          retention-days: 3
