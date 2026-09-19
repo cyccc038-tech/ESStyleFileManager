@@ -1,0 +1,65 @@
+name: Export ES SAF Smali
+
+on:
+  push:
+    paths:
+      - '.github/workflows/es-saf-smali-inspect.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install apktool
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apktool unzip curl
+
+      - name: Download exact ES source build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 5 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+
+      - name: Decode smali only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          apktool d -f -r source.apk -o decoded
+          mkdir -p inspect
+          find decoded -type f \( \
+            -path '*/es/i41*.smali' -o \
+            -path '*/es/h41*.smali' -o \
+            -path '*/es/oa5*.smali' -o \
+            -path '*/es/up4*.smali' -o \
+            -path '*/com/estrongs/fs/impl/local/AuthServiceHelper*.smali' \
+          \) -print -exec cp --parents '{}' inspect/ \;
+          grep -R -n -E 'OPEN_DOCUMENT_TREE|INITIAL_URI|Android/data|Android/obb|takePersistableUriPermission|DocumentsContract|SDK_INT|VERSION_CODES' inspect > inspect/SAF_MATCHES.txt || true
+          find inspect -type f -printf '%p\n' | sort > inspect/FILES.txt
+
+      - name: Remove source APK and unrelated decode output
+        shell: bash
+        run: |
+          rm -f source.apk
+          rm -rf decoded
+
+      - name: Upload SAF-only inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: ES-SAF-smali-inspection
+          path: inspect/
+          retention-days: 3
