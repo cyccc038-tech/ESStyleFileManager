@@ -1,0 +1,33 @@
+name: Export Baksmali Tools
+
+on:
+  push:
+    paths:
+      - '.github/workflows/export-baksmali-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install smali tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq smali
+          mkdir -p export
+          command -v baksmali
+          command -v smali
+          cp "$(command -v baksmali)" export/
+          cp "$(command -v smali)" export/
+          dpkg -L smali | grep -E '/usr/share/java/.*\.jar$' | while read f; do cp "$f" export/; done
+          ls -lh export
+      - uses: actions/upload-artifact@v4
+        with:
+          name: baksmali-tools
+          path: export/
+          retention-days: 1
