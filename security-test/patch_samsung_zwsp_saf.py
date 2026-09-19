@@ -415,74 +415,66 @@ def patch(root: Path):
 
     p = es / 'oa5.smali'
     s = p.read_text(encoding='utf-8')
-    marker = '''.method public static c(Ljava/lang/String;)Landroid/net/Uri;
-    .locals 10
-    .annotation build Landroidx/annotation/Nullable;
-    .end annotation
-
-    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+    marker = '''    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    injected = '''.method public static c(Ljava/lang/String;)Landroid/net/Uri;
-    .locals 10
-    .annotation build Landroidx/annotation/Nullable;
-    .end annotation
-
-    invoke-static {p0}, Les/v52s;->f(Ljava/lang/String;)Z
-    move-result v0
-    if-eqz v0, :v52_oa5_c_normal
+    injected = '''    invoke-static {p0}, Les/v52s;->f(Ljava/lang/String;)Z
+    move-result v9
+    if-eqz v9, :v52_oa5_c_normal
     invoke-static {p0}, Les/v52s;->d(Ljava/lang/String;)Landroid/net/Uri;
-    move-result-object p0
-    return-object p0
+    move-result-object v9
+    return-object v9
 
     :v52_oa5_c_normal
     sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    s = replace_once(s, marker, injected, 'oa5 c')
+    s = replace_once_in_method(
+        s,
+        '.method public static c(Ljava/lang/String;)Landroid/net/Uri;',
+        marker,
+        injected,
+        'oa5 c',
+    )
 
-    marker = '''.method public static e(Ljava/lang/String;)Landroid/net/Uri;
-    .locals 10
-    .annotation build Landroidx/annotation/Nullable;
-    .end annotation
-
-    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+    marker = '''    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    injected = '''.method public static e(Ljava/lang/String;)Landroid/net/Uri;
-    .locals 10
-    .annotation build Landroidx/annotation/Nullable;
-    .end annotation
-
-    invoke-static {p0}, Les/v52s;->f(Ljava/lang/String;)Z
-    move-result v0
-    if-eqz v0, :v52_oa5_e_normal
+    injected = '''    invoke-static {p0}, Les/v52s;->f(Ljava/lang/String;)Z
+    move-result v9
+    if-eqz v9, :v52_oa5_e_normal
     invoke-static {p0}, Les/v52s;->d(Ljava/lang/String;)Landroid/net/Uri;
-    move-result-object p0
-    return-object p0
+    move-result-object v9
+    return-object v9
 
     :v52_oa5_e_normal
     sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    s = replace_once(s, marker, injected, 'oa5 e')
+    s = replace_once_in_method(
+        s,
+        '.method public static e(Ljava/lang/String;)Landroid/net/Uri;',
+        marker,
+        injected,
+        'oa5 e',
+    )
 
-    marker = '''    :cond_0
-    invoke-static {p0}, Les/oa5;->m(Ljava/lang/String;)Z
-
-    move-result v1
+    marker = '''    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    injected = '''    :cond_0
-    invoke-static {p0}, Les/v52s;->c(Ljava/lang/String;)Z
-    move-result v1
-    if-eqz v1, :v52_oa5_l_normal
+    injected = '''    invoke-static {p0}, Les/v52s;->c(Ljava/lang/String;)Z
+    move-result v11
+    if-eqz v11, :v52_oa5_l_normal
 
     invoke-static {}, Les/v52s;->e()Z
-    move-result p0
-    return p0
+    move-result v11
+    return v11
 
     :v52_oa5_l_normal
-    invoke-static {p0}, Les/oa5;->m(Ljava/lang/String;)Z
-
-    move-result v1
+    sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
 '''
-    s = replace_once(s, marker, injected, 'oa5 l authorization state')
+    s = replace_once_in_method(
+        s,
+        '.method public static l(Ljava/lang/String;Ljava/util/List;)Z',
+        marker,
+        injected,
+        'oa5 l authorization state',
+    )
     p.write_text(s, encoding='utf-8')
 
     print('Samsung ZWSP one-shot SAF patch applied successfully')
