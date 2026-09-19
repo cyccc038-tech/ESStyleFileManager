@@ -46,6 +46,9 @@ jobs:
             -path '*/es/h41*.smali' -o \
             -path '*/es/oa5*.smali' -o \
             -path '*/es/c56*.smali' -o \
+            -path '*/es/v31*.smali' -o \
+            -path '*/es/w31*.smali' -o \
+            -path '*/es/nf6*.smali' -o \
             -path '*/es/hc1$h*.smali' -o \
             -path '*/es/up4*.smali' -o \
             -path '*/com/estrongs/fs/impl/local/AuthServiceHelper*.smali' \
