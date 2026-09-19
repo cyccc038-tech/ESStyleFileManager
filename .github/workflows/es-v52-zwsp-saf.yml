@@ -1,0 +1,518 @@
+name: Build ES V5.2 One-Time SAF Dex
+
+on:
+  push:
+    paths:
+      - '.github/workflows/es-v52-zwsp-saf.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install smali tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq smali unzip curl
+          command -v baksmali
+          command -v smali
+
+      - name: Download exact ES source classes5
+        shell: bash
+        run: |
+          set -euxo pipefail
+          URL='https://apps.apk4free.net/es-file-explorer/ES_File_Explorer-Premium-v4.4.3.7_build_10353-Mod.apk'
+          curl -fL --retry 5 --retry-all-errors "$URL" -o source.apk
+          echo 'cdca718efd9966697940b9013b57c20057e6c8b1f86b73708bdefa487b684922  source.apk' | sha256sum -c -
+          unzip -p source.apk classes5.dex > classes5-original.dex
+          echo '342928bbc8a985516317dec8162761cdd2ca4d67dd7c21f4f26275625a27e160  classes5-original.dex' | sha256sum -c -
+
+      - name: Disassemble
+        shell: bash
+        run: |
+          set -euxo pipefail
+          baksmali disassemble classes5-original.dex -o smali5
+
+      - name: Add one-time SAF helper and patch ES
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat > smali5/es/z85.smali <<'SMALI'
+          .class public final Les/z85;
+          .super Ljava/lang/Object;
+
+          .method public static a()Z
+              .locals 2
+              sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+              const/16 v1, 0x23
+              if-lt v0, v1, :yes
+              const/4 v0, 0x0
+              return v0
+            :yes
+              const/4 v0, 0x1
+              return v0
+          .end method
+
+          .method public static b()Z
+              .locals 4
+              invoke-static {}, Les/z85;->a()Z
+              move-result v0
+              if-nez v0, :supported
+              const/4 v0, 0x0
+              return v0
+            :supported
+              invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
+              move-result-object v0
+              invoke-virtual {v0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
+              move-result-object v0
+              invoke-virtual {v0}, Landroid/content/ContentResolver;->getPersistedUriPermissions()Ljava/util/List;
+              move-result-object v0
+              invoke-interface {v0}, Ljava/util/List;->iterator()Ljava/util/Iterator;
+              move-result-object v0
+            :loop
+              invoke-interface {v0}, Ljava/util/Iterator;->hasNext()Z
+              move-result v1
+              if-eqz v1, :no
+              invoke-interface {v0}, Ljava/util/Iterator;->next()Ljava/lang/Object;
+              move-result-object v1
+              check-cast v1, Landroid/content/UriPermission;
+              invoke-virtual {v1}, Landroid/content/UriPermission;->getUri()Landroid/net/Uri;
+              move-result-object v1
+              invoke-static {v1}, Les/z85;->i(Landroid/net/Uri;)Z
+              move-result v2
+              if-eqz v2, :loop
+              const/4 v0, 0x1
+              return v0
+            :no
+              const/4 v0, 0x0
+              return v0
+          .end method
+
+          .method public static c(Ljava/lang/String;)Z
+              .locals 2
+              if-nez p0, :have
+              const/4 v0, 0x0
+              return v0
+            :have
+              invoke-static {p0}, Les/up4;->E0(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              invoke-static {v0}, Les/up4;->m(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              if-nez v0, :norm
+              const/4 v0, 0x0
+              return v0
+            :norm
+              invoke-static {v0}, Les/oa5;->g(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              if-nez v0, :check_data
+              const/4 v0, 0x0
+              return v0
+            :check_data
+              const-string v1, "Android/data"
+              invoke-virtual {v0, v1}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
+              move-result v1
+              if-nez v1, :yes
+              const-string v1, "Android/obb"
+              invoke-virtual {v0, v1}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
+              move-result v1
+              if-eqz v1, :no
+            :yes
+              const/4 v0, 0x1
+              return v0
+            :no
+              const/4 v0, 0x0
+              return v0
+          .end method
+
+          .method public static d()Landroid/net/Uri;
+              .locals 2
+              new-instance v0, Les/c56$a;
+              invoke-direct {v0}, Les/c56$a;-><init>()V
+              const-string v1, "​Android"
+              invoke-virtual {v0, v1}, Les/c56$a;->d(Ljava/lang/String;)Les/c56$a;
+              move-result-object v0
+              invoke-virtual {v0, v1}, Les/c56$a;->b(Ljava/lang/String;)Les/c56$a;
+              move-result-object v0
+              invoke-virtual {v0}, Les/c56$a;->a()Landroid/net/Uri;
+              move-result-object v0
+              return-object v0
+          .end method
+
+          .method public static e(Ljava/lang/String;)Landroid/net/Uri;
+              .locals 4
+              invoke-static {}, Les/z85;->a()Z
+              move-result v0
+              if-eqz v0, :none
+              invoke-static {}, Les/z85;->b()Z
+              move-result v0
+              if-eqz v0, :none
+              invoke-static {p0}, Les/z85;->c(Ljava/lang/String;)Z
+              move-result v0
+              if-eqz v0, :none
+
+              invoke-static {p0}, Les/up4;->E0(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              invoke-static {v0}, Les/up4;->m(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              invoke-static {v0}, Les/oa5;->g(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v0
+              if-eqz v0, :none
+
+              new-instance v1, Ljava/lang/StringBuilder;
+              invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
+              const-string v2, "​"
+              invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+              invoke-virtual {v1, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
+              invoke-virtual {v1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
+              move-result-object v0
+
+              new-instance v1, Les/c56$a;
+              invoke-direct {v1}, Les/c56$a;-><init>()V
+              const-string v2, "​Android"
+              invoke-virtual {v1, v2}, Les/c56$a;->d(Ljava/lang/String;)Les/c56$a;
+              move-result-object v1
+              invoke-virtual {v1, v0}, Les/c56$a;->b(Ljava/lang/String;)Les/c56$a;
+              move-result-object v1
+              invoke-virtual {v1}, Les/c56$a;->a()Landroid/net/Uri;
+              move-result-object v0
+              return-object v0
+            :none
+              const/4 v0, 0x0
+              return-object v0
+          .end method
+
+          .method public static f(Ljava/lang/String;)Landroid/net/Uri;
+              .locals 1
+              invoke-static {}, Les/z85;->a()Z
+              move-result v0
+              if-eqz v0, :none
+              invoke-static {}, Les/z85;->b()Z
+              move-result v0
+              if-eqz v0, :none
+              invoke-static {p0}, Les/z85;->c(Ljava/lang/String;)Z
+              move-result v0
+              if-eqz v0, :none
+              invoke-static {}, Les/z85;->d()Landroid/net/Uri;
+              move-result-object v0
+              return-object v0
+            :none
+              const/4 v0, 0x0
+              return-object v0
+          .end method
+
+          .method public static g(Landroid/net/Uri;)Landroid/net/Uri;
+              .locals 3
+              if-eqz p0, :ret
+              invoke-static {}, Les/z85;->a()Z
+              move-result v0
+              if-eqz v0, :ret
+              invoke-static {p0}, Les/z85;->i(Landroid/net/Uri;)Z
+              move-result v0
+              if-eqz v0, :ret
+              invoke-virtual {p0}, Landroid/net/Uri;->getLastPathSegment()Ljava/lang/String;
+              move-result-object v0
+              const-string v1, "children"
+              invoke-virtual {v1, v0}, Ljava/lang/String;->equals(Ljava/lang/Object;)Z
+              move-result v0
+              if-eqz v0, :ret
+              const-string v0, "manage"
+              invoke-virtual {p0, v0}, Landroid/net/Uri;->getQueryParameter(Ljava/lang/String;)Ljava/lang/String;
+              move-result-object v1
+              if-nez v1, :ret
+              invoke-virtual {p0}, Landroid/net/Uri;->buildUpon()Landroid/net/Uri$Builder;
+              move-result-object v1
+              const-string v2, "1"
+              invoke-virtual {v1, v0, v2}, Landroid/net/Uri$Builder;->appendQueryParameter(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri$Builder;
+              move-result-object v0
+              invoke-virtual {v0}, Landroid/net/Uri$Builder;->build()Landroid/net/Uri;
+              move-result-object p0
+            :ret
+              return-object p0
+          .end method
+
+          .method public static h(Landroid/net/Uri;)V
+              .locals 3
+              if-eqz p0, :done
+              invoke-static {p0}, Les/z85;->i(Landroid/net/Uri;)Z
+              move-result v0
+              if-eqz v0, :done
+              invoke-static {}, Lcom/estrongs/android/pop/FexApplication;->o()Lcom/estrongs/android/pop/FexApplication;
+              move-result-object v0
+              invoke-virtual {v0}, Landroid/content/Context;->getContentResolver()Landroid/content/ContentResolver;
+              move-result-object v0
+              const/4 v1, 0x3
+            :try_start_0
+              invoke-virtual {v0, p0, v1}, Landroid/content/ContentResolver;->takePersistableUriPermission(Landroid/net/Uri;I)V
+            :try_end_0
+              .catch Ljava/lang/SecurityException; {:try_start_0 .. :try_end_0} :catch_0
+              return-void
+            :catch_0
+              const/4 v1, 0x1
+            :try_start_1
+              invoke-virtual {v0, p0, v1}, Landroid/content/ContentResolver;->takePersistableUriPermission(Landroid/net/Uri;I)V
+            :try_end_1
+              .catch Ljava/lang/SecurityException; {:try_start_1 .. :try_end_1} :done
+            :done
+              return-void
+          .end method
+
+          .method public static i(Landroid/net/Uri;)Z
+              .locals 2
+              if-nez p0, :have
+              const/4 v0, 0x0
+              return v0
+            :have
+              invoke-virtual {p0}, Landroid/net/Uri;->toString()Ljava/lang/String;
+              move-result-object v0
+              const-string v1, "%E2%80%8BAndroid"
+              invoke-virtual {v0, v1}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+              move-result v1
+              if-nez v1, :yes
+              const-string v1, "​Android"
+              invoke-virtual {v0, v1}, Ljava/lang/String;->contains(Ljava/lang/CharSequence;)Z
+              move-result v1
+              if-eqz v1, :no
+            :yes
+              const/4 v0, 0x1
+              return v0
+            :no
+              const/4 v0, 0x0
+              return v0
+          .end method
+          SMALI
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root=Path('smali5/es')
+
+          def method_span(text, sig):
+              a=text.index(sig)
+              b=text.index('.end method', a)+len('.end method')
+              return a,b
+
+          def inject_after_locals(path, sig, code):
+              p=Path(path); s=p.read_text()
+              a,b=method_span(s,sig)
+              m=s[a:b]
+              pos=m.index('\n', m.index('.locals'))+1
+              m=m[:pos]+code+m[pos:]
+              p.write_text(s[:a]+m+s[b:])
+
+          # Android 15+ must not use the old direct zero-width File route;
+          # Samsung exposes the alias but denies execute access inside app dirs.
+          p=root/'n85.smali'
+          s=p.read_text()
+          a,b=method_span(s,'.method public final a(Ljava/lang/String;)Z')
+          new=r'''.method public final a(Ljava/lang/String;)Z
+              .locals 2
+
+              sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+              const/16 v1, 0x23
+              if-lt v0, v1, :v52_false
+
+              invoke-static {}, Les/n85;->b()Z
+              move-result v0
+              if-eqz v0, :v52_false
+
+              if-eqz p1, :v52_false
+
+              sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+              const/16 v1, 0x1e
+              if-lt v0, v1, :v52_false
+
+              invoke-virtual {p0}, Les/n85;->c()Z
+              move-result v0
+              if-eqz v0, :v52_false
+
+              invoke-static {p1}, Les/oa5;->i(Ljava/lang/String;)Z
+              move-result p1
+              return p1
+
+            :v52_false
+              const/4 p1, 0x0
+              return p1
+          .end method'''
+          p.write_text(s[:a]+new+s[b:])
+
+          # When a one-time special SAF grant exists, build all data/obb
+          # document URIs under that one granted Android tree.
+          for method in ['c','e']:
+              p=root/'oa5.smali'; s=p.read_text()
+              sig=f'.method public static {method}(Ljava/lang/String;)Landroid/net/Uri;'
+              a,b=method_span(s,sig)
+              m=s[a:b]
+              pos=m.index('\n',m.index('.locals'))+1
+              helper='e' if method=='c' else 'f'
+              code=f'''
+              invoke-static {{p0}}, Les/z85;->{helper}(Ljava/lang/String;)Landroid/net/Uri;
+              move-result-object v9
+              if-eqz v9, :v52_{method}_normal
+              return-object v9
+            :v52_{method}_normal
+          '''
+              m=m[:pos]+code+m[pos:]
+              p.write_text(s[:a]+m+s[b:])
+
+          # Treat the one persisted Android-tree grant as authorization for
+          # every Android/data and Android/obb descendant.
+          inject_after_locals(root/'oa5.smali',
+              '.method public static l(Ljava/lang/String;Ljava/util/List;)Z',
+              r'''
+              invoke-static {p0}, Les/z85;->c(Ljava/lang/String;)Z
+              move-result v10
+              if-eqz v10, :v52_l_normal
+              invoke-static {}, Les/z85;->b()Z
+              move-result v10
+              if-eqz v10, :v52_l_normal
+              const/4 v10, 0x1
+              return v10
+            :v52_l_normal
+          ''')
+
+          # Reuse special persisted grant immediately inside DocumentRWUtil.
+          p=root/'h41.smali'; s=p.read_text()
+          sig='.method public static declared-synchronized p(Ljava/lang/String;I)Landroid/net/Uri;'
+          a,b=method_span(s,sig); m=s[a:b]
+          needle='    monitor-enter v1\n'
+          ins=r'''
+              invoke-static {p0}, Les/z85;->e(Ljava/lang/String;)Landroid/net/Uri;
+              move-result-object v2
+              if-eqz v2, :v52_p_normal
+              monitor-exit v1
+              return-object v2
+            :v52_p_normal
+          '''
+          m=m.replace(needle,needle+ins,1)
+
+          # If this very call just returned from the one-time picker, persist it
+          # and satisfy the current request without requiring a second click.
+          needle2='    check-cast v0, Les/hc1$h;\n'
+          ins2=r'''
+              iget-object v6, v0, Les/hc1$h;->e:Landroid/net/Uri;
+              invoke-static {v6}, Les/z85;->h(Landroid/net/Uri;)V
+              invoke-static {p0}, Les/z85;->e(Ljava/lang/String;)Landroid/net/Uri;
+              move-result-object v6
+              if-eqz v6, :v52_p_after_grant
+              monitor-exit v1
+              return-object v6
+            :v52_p_after_grant
+          '''
+          if needle2 not in m:
+              raise SystemExit('h41 p check-cast needle missing')
+          m=m.replace(needle2,needle2+ins2,1)
+          p.write_text(s[:a]+m+s[b:])
+
+          # Child enumeration uses ExternalStorageProvider manage mode only for
+          # the special user-granted tree.
+          inject_after_locals(root/'h41.smali',
+              '.method public static query(Landroid/net/Uri;[Ljava/lang/String;)Landroid/database/Cursor;',
+              r'''
+              invoke-static {p0}, Les/z85;->g(Landroid/net/Uri;)Landroid/net/Uri;
+              move-result-object p0
+          ''')
+
+          # On Android 15+, all Android/data and Android/obb auth requests open
+          # the same special Android tree. One approval then covers descendants.
+          p=root/'i41$h.smali'; s=p.read_text()
+          sig='.method public a(Ljava/lang/String;)V'
+          a,b=method_span(s,sig); m=s[a:b]
+          needle='    invoke-direct {p1, v0}, Landroid/content/Intent;-><init>(Ljava/lang/String;)V\n'
+          ins=r'''
+              sget v0, Landroid/os/Build$VERSION;->SDK_INT:I
+              const/16 v1, 0x23
+              if-lt v0, v1, :v52_auth_normal
+
+              iget v0, p0, Les/i41$h;->f:I
+              sget v1, Les/hc1$h;->o:I
+              if-eq v0, v1, :v52_auth_special
+              sget v1, Les/hc1$h;->p:I
+              if-eq v0, v1, :v52_auth_special
+              sget v1, Les/hc1$h;->r:I
+              if-eq v0, v1, :v52_auth_special
+              sget v1, Les/hc1$h;->s:I
+              if-ne v0, v1, :v52_auth_normal
+
+            :v52_auth_special
+              const/16 v0, 0xc3
+              invoke-virtual {p1, v0}, Landroid/content/Intent;->setFlags(I)Landroid/content/Intent;
+              const-string v0, "android.provider.extra.INITIAL_URI"
+              invoke-static {}, Les/z85;->d()Landroid/net/Uri;
+              move-result-object v1
+              invoke-virtual {p1, v0, v1}, Landroid/content/Intent;->putExtra(Ljava/lang/String;Landroid/os/Parcelable;)Landroid/content/Intent;
+              invoke-virtual {p0, p1}, Les/i41$h;->b(Landroid/content/Intent;)V
+              return-void
+
+            :v52_auth_normal
+          '''
+          if needle not in m:
+              raise SystemExit('i41 auth needle missing')
+          m=m.replace(needle,needle+ins,1)
+          p.write_text(s[:a]+m+s[b:])
+
+          # Persist the returned special tree before the existing callback does
+          # its legacy package-level validation.
+          p=root/'i41$h.smali'; s=p.read_text()
+          sig='.method public onActivityResult(IILandroid/content/Intent;)V'
+          a,b=method_span(s,sig); m=s[a:b]
+          needle='    move-result-object p2\n\n    invoke-interface {p1, p2}, Les/i41$g;->a(Landroid/net/Uri;)V'
+          repl='    move-result-object p2\n\n    invoke-static {p2}, Les/z85;->h(Landroid/net/Uri;)V\n\n    invoke-interface {p1, p2}, Les/i41$g;->a(Landroid/net/Uri;)V'
+          if needle not in m:
+              raise SystemExit('i41 result needle missing')
+          m=m.replace(needle,repl,1)
+          p.write_text(s[:a]+m+s[b:])
+
+          Path('PATCH_REPORT.txt').write_text(
+              'ES V5.2 one-time SAF backport\n'
+              'Android >= 15 only (API 35+)\n'
+              'Android 14 and below keep V5 behavior\n'
+              'One user-approved special Android tree is persisted\n'
+              'Android/data and Android/obb descendants map under that tree\n'
+              'children queries add manage=1 only for that tree\n'
+              'No network/account/payment/license code modified\n',
+              encoding='utf-8')
+          PY
+
+      - name: Assemble and validate
+        shell: bash
+        run: |
+          set -euxo pipefail
+          smali assemble smali5 -o classes5-v52.dex
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, struct, zlib
+          d=Path('classes5-v52.dex').read_bytes()
+          assert d[:4]==b'dex\n'
+          assert d[12:32]==hashlib.sha1(d[32:]).digest()
+          assert struct.unpack('<I',d[8:12])[0] == (zlib.adler32(d[12:]) & 0xffffffff)
+          print('DEX checksum/signature OK')
+          print('sha256',hashlib.sha256(d).hexdigest())
+          PY
+          baksmali disassemble classes5-v52.dex -o verify-smali
+          grep -R -n 'manage' verify-smali/es/z85.smali
+          grep -R -n $'\u200bAndroid' verify-smali/es/z85.smali
+          grep -R -n 'Les/z85;' verify-smali/es/{oa5,h41,i41\$h,n85}.smali | tee PATCH_CALLS.txt
+          sha256sum classes5-original.dex classes5-v52.dex | tee DEX_HASHES.txt
+
+      - name: Remove proprietary source
+        shell: bash
+        run: |
+          rm -f source.apk classes5-original.dex
+          rm -rf smali5 verify-smali
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ES-V52-OneTime-SAF-dex
+          path: |
+            classes5-v52.dex
+            PATCH_REPORT.txt
+            PATCH_CALLS.txt
+            DEX_HASHES.txt
+          retention-days: 3
