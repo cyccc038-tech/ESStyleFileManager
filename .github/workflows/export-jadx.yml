@@ -1,0 +1,30 @@
+name: Export Jadx CLI
+
+on:
+  push:
+    paths:
+      - '.github/workflows/export-jadx.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download JADX
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fL --retry 5 --retry-all-errors \
+            https://github.com/skylot/jadx/releases/download/v1.5.6/jadx-1.5.6.zip \
+            -o jadx.zip
+          mkdir -p out
+          unzip -q jadx.zip -d out
+          out/bin/jadx --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jadx-1.5.6
+          path: out/
+          retention-days: 1
